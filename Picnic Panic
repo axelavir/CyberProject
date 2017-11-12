@@ -1,0 +1,1178 @@
+# CyberProject
+Kenton Wilhelm, Brooklin Ramagos, Reid Naylor
+######################################################################
+# Picnic Panic
+# 132 Final Project
+# Kenton Wilhelm, Reid Naylor, Brooklin Ramagos
+######################################################################
+
+import time
+from Tkinter import *
+from PIL import ImageTk , Image
+
+######################################################################
+
+# Classes
+
+class GameBoard(object):
+    def __init__(self, levelToGenerate):
+        # The board that it uses for knowing whats going on
+        self.volitileBoard = {}
+        self.levelString = levelToGenerate.levelString
+        self.antImage = ImageTk.PhotoImage(file = "antT2.gif")
+        self.antPos = [0,0]
+        self.orientation = 1 # Left: 1, Up: 2, Down: 3, Right: 4
+        self.antImageID = canvas.create_image(-50,-50, image = self.antImage,
+                                              anchor = NW)
+        self.Board = {}
+        
+
+
+    # Called to generate the level by:
+    # Generating the board and removing unneeded squares
+    # Creating each block at the correct location
+    def generateLevel(self):
+        self.generateBoard()
+        
+        # activeSquares is the binary representation of which quares are active, sent in hex
+        activeSquares = bin(int(self.levelString[0:45], 16))[2:]
+
+        # Deletes the squares that this level doesnt need
+        for j in range(0,18):
+            for i in range(0,10):
+                if (activeSquares[j*10+i] == "0" or j*10+i == 0):
+                    canvas.delete(self.Board[j*10+i])
+                    del self.Board[j*10+i]
+
+
+        # sqaureType is the binary representation of what each square does
+        squareType = self.levelString[STARTOFTYPE:]
+
+        # For each block, create a block object and store it in the volitile Board
+        counter = 0
+        for i in range(0,len(squareType)):
+            while (True):
+                if(self.Board.has_key(counter)):
+                    break
+                counter = counter + 1
+
+            # Create the block
+            b = Block(self.Board[counter],squareType[i:i+1],counter)
+            self.volitileBoard[i] = b
+            counter = counter + 1
+
+
+            # If the space is a 0 type, then the ant starts there
+            if squareType[i:i+1] == "0":
+                self.antPos = [(counter-1)/10, (counter-1)%10]
+
+        # move the ant to the correct starting spot and put him on top
+        canvas.coords(self.antImageID, GAMEBDR_X + self.antPos[0] * SQUARESIZE + 1,
+                          GAMEBDR_Y + self.antPos[1] * SQUARESIZE + 1)
+        canvas.lift(self.antImageID)
+
+            
+        canvas.update()
+
+        print "I just exited generateLevel"
+
+
+    # Called to create a blank board
+    def generateBoard(self):
+        
+        for j in range(0,18):
+            for i in range(0,10):
+                xStart = GAMEBDR_X + j * SQUARESIZE
+                yStart = GAMEBDR_Y + i * SQUARESIZE
+
+                exec("self.Board[{}] = (canvas.create_rectangle(xStart, yStart, \
+                     xStart + SQUARESIZE, yStart + SQUARESIZE))".format(j*10+i))
+
+
+
+
+    # Called to play the game
+    def playLoop(self):
+        
+        GPIO = 0
+        # You begin the game not dead and not having won
+        dead = False
+        win = False
+
+        # While you are not dead and you haven't won
+        while(dead == False and win == False):
+            GPIO = waitForInput()
+
+            if GPIO == 0 or GPIO == 5:
+                # They pressed "select" or "start", show them the pause menu
+                status = pauseMenu()
+                if status == "exit":
+                    return "exit"
+
+                if status == "restart":
+                    dead = True
+                    
+            else:
+                # Reduce Square
+                self.reduceSquare(self.antPos)
+                # Move the ant to the new square
+                self.moveAnt(GPIO)
+                # Check if youre dead
+                dead = self.detectDeath()
+                # Check if you won
+                win = self.checkWin()
+
+
+        # Tell the play function to reset the current level and begin it again
+        if dead == True:
+            # Do some animation
+
+            # Return 
+            return "play"
+
+        # Tell the play function to note that the level has been completed, reset the current level,
+        # and begin the next level
+        # # # # Unless it is the last level, in which case show the credits # # # # # #
+        if win == True:
+            return "complete"
+
+        # After doing everything to the ant in one round, update the canvas
+        canvas.update()
+
+
+    # Lowers the power level of the square you just left
+    def reduceSquare(self, antPos):
+        # For every square left on the board
+        for i in self.volitileBoard:
+            # If the position of the square is the position we were on
+            if self.volitileBoard[i].pos == self.antPos[0]*10 + self.antPos[1]:
+                # Lower its strength by one
+                self.volitileBoard[i].die()
+                # If that kills it (it's type becomes "d")
+                if self.volitileBoard[i].bType == "d":
+
+                    # Delete both the image and its outline, as well as the volitile memory of it
+                    canvas.delete(self.volitileBoard[i].squareID)
+                    canvas.delete(self.volitileBoard[i].imageID)
+                    del self.volitileBoard[i]
+
+                # We don't need to keep checking after this
+                break
+            
+
+    # Called to move the ant
+    def moveAnt(self, direction):
+        # Change the ant's position
+        self.changeAntPos(direction)
+        # Move him there
+        canvas.coords(self.antImageID, GAMEBDR_X + self.antPos[0] * SQUARESIZE + 1,
+                          GAMEBDR_Y + self.antPos[1] * SQUARESIZE + 1)
+        canvas.lift(self.antImageID)
+        canvas.update()
+
+    # Changes antPos
+    def changeAntPos(self,direction):
+        # If they are moving left
+        if direction == 1:
+            self.antPos[0] = self.antPos[0] - 1
+
+        # If they are moving up
+        if direction == 2:
+            self.antPos[1] = self.antPos[1] - 1
+
+        # If they are moving down
+        if direction == 3:
+            self.antPos[1] = self.antPos[1] + 1
+
+        # If they are moving right
+        if direction == 4:
+            self.antPos[0] = self.antPos[0] + 1
+
+
+    # Called to return if the player is dead
+    def detectDeath(self):
+        # If they are out of bounds they died
+        if self.antPos[0] < 0 or self.antPos[0] > 17 or self.antPos[1] < 0 or self.antPos[1] > 9:
+            return True
+        # For every square in the level
+        for i in self.volitileBoard:
+            # If you are on a square that exists
+            if self.volitileBoard[i].pos == self.antPos[0]*10 + self.antPos[1]:
+                # You didn't die, congratulations!
+                return False            
+
+        # If after testing every square left in the level you
+        # Never got considered safe, you must be off the map, and thus dead
+        return True
+    
+
+    # Called to return if the player has won
+    def checkWin(self):
+        # If youre on the last possible square
+        if len(self.volitileBoard) == 1:
+            # If that square's type is the end
+            for i in self.volitileBoard:
+                if self.volitileBoard[i].bType == "4":
+                    return True
+
+        # Otherwise return False
+        return False
+            
+                    
+        
+    # Called to reset everything
+    def reset(self):
+        # Deletes all of the squares and images generated previously
+        for i in self.volitileBoard:
+            canvas.delete(self.volitileBoard[i].squareID)
+            canvas.delete(self.volitileBoard[i].imageID)
+
+        # Resets volitile Board
+        self.volitileBoard = {}
+        canvas.update()
+
+
+    def LvEditorToggleSquare(self,pos,typeList,listBlocks):
+        x = pos/10
+        y = pos%10
+
+
+        # If there isn't a block here
+        if typeList[pos] == 0:
+            # Create one
+            b = Block(1,"1",pos)
+            listBlocks[pos] = b
+            typeList[pos] = 1
+
+        else:
+            # Otherwise cycle it
+            listBlocks[pos].lvEditorCycle()
+            typeList[pos] = typeList[pos] + 1
+            print listBlocks[pos].imageID
+
+            # If the block is dead
+            if listBlocks[pos].bType == "d":
+                # Delete it and set it to 0
+                print listBlocks[pos].imageID
+                canvas.delete(listBlocks[pos].imageID)
+                typeList[pos] = 0
+        
+        canvas.update()
+        
+            
+            
+        
+            
+
+        
+# Blocks are the squares you stand on
+class Block(object):
+        # Created blocks get sent a squareID (which points to a square on the canvas)
+        # A Type (number 0-4), A Position (Number 0-179.....)
+    def __init__(self, squareID, bType, pos):
+        self.squareID = squareID
+        self.bType = bType
+        self.pos = pos
+        self.image = None
+        self.imageID = None
+        self.squareArt(False)
+
+
+    def squareArt(self, change):
+
+        # Creates the art for each square
+        if self.bType == "0":
+            self.image = ImageTk.PhotoImage(file = "blank.gif")
+        if self.bType == "1":
+            self.image = ImageTk.PhotoImage(file = "blueberry.gif")
+        if self.bType == "2":
+            self.image = ImageTk.PhotoImage(file = "strawberry.gif")
+        if self.bType == "3":
+            self.image = ImageTk.PhotoImage(file = "watermelon.gif")
+        if self.bType == "4":
+            self.image = ImageTk.PhotoImage(file = "picnic_basket.gif")
+
+
+        if (not(change)):
+            # Pastes the image in the right spot and saves the ImageID
+            self.imageID = canvas.create_image(GAMEBDR_X+(self.pos)/10*SQUARESIZE + 1, GAMEBDR_Y + self.pos%10*SQUARESIZE + 1, image = self.image, anchor = "nw")
+        else:
+            canvas.itemconfig(self.imageID, image = self.image)
+
+    # Called to reduce the power of a square by 1 (potentially killing it)
+    def die(self):
+        if self.bType == "0":
+            self.bType = "d"
+        if self.bType == "1":
+            self.bType = "d"
+        if self.bType == "2":
+            self.bType = "1"
+        if self.bType == "3":
+            self.bType = "2"
+        if self.bType == "4":
+            self.bType = "d"
+        self.squareArt(True)
+
+    def lvEditorCycle(self):
+        
+        if self.bType == "0":
+            self.bType = "d"
+        if self.bType == "4":
+            self.bType = "0"
+        if self.bType == "3":
+            self.bType = "4"
+        if self.bType == "2":
+            self.bType = "3"
+        if self.bType == "1":
+            self.bType = "2"        
+
+        print self.bType
+        self.squareArt(True)
+
+
+# This class is the collection of all levels
+class AllLevels(object):
+    def __init__(self):
+        self.levelList = []
+
+
+    def getLevels(self):
+        # Gets all the levels from the text document
+
+        file = open("GameData.txt","r")
+
+        cutoff = 0
+        for i in file:
+            complete = str(i[0:1])
+            cutoff = i.find(".",2)
+            levelNo = str(i[2:cutoff])
+            levelString = str(i[cutoff+1:len(i)-1])
+
+            if complete == "1":
+                complete = True
+            else:
+                complete = False
+
+            l = Level(levelString, levelNo, complete)
+            l.unlocked = complete
+            # Make sure the first level is unlocked
+            if levelNo == "1":
+                l.unlocked = True
+            self.levelList.append(l)
+
+        file.close()
+
+        # For every level, if its completed, make sure that the next is unlocked.
+        for i in range(49):
+            # If the level is completed
+            if self.levelList[i].complete == True:
+                # Unlock the next level
+                self.levelList[i+1].unlocked = True
+
+    # Called to unlock a level by its name
+    def unlock(self,levelNo):
+        # For all the levels
+        print levelNo
+        for i in self.levelList:
+            print i.levelNo
+            # If I'm currently looking at the level,
+            if str (levelNo) == i.levelNo:
+                # Unlock it
+                i.unlocked = True
+                break
+        
+
+# Every Level is a Level object
+class Level(object):
+    def __init__(self, levelString, levelNo, complete):
+        self.levelString = levelString
+        self.levelNo = levelNo
+        self.complete = complete
+        if self.levelNo == "1":
+            self.unlocked = True
+        else:
+            self.unlocked = False
+
+
+
+    # String representation of a level
+    def __str__(self):
+        return "I am level {}, my string is {}, and complete: {}, Unlocked: {}".format(self.levelNo, self.levelString, self.complete, self.unlocked)
+
+    # Returns what the .txt file will see
+    def formatOutput(self):
+
+        if self.complete == True:
+            completeNo = 1
+        else:
+            completeNo = 0
+        
+        return "{}.{}.{}".format(completeNo, self.levelNo, self.levelString)
+
+    
+# The level Editor is a class
+class LevelEditor(object):
+    def __init__(self):
+        self.numBoard = []
+        self.numBoardBlocks = []
+        self.fillBlank(self.numBoard)
+        self.level = Level("fffffffffffffffffffffffffffffffffffffffffffff.","LevelEditor",False)
+        self.gameBoard = GameBoard(self.level)
+
+
+    def fillBlank(self, listToFill):
+        for i in range(180):
+            self.numBoard.append(0)
+            self.numBoardBlocks.append(0)
+
+        print self.numBoard
+        print len(self.numBoard)
+
+
+    # Called after they finish to create a level
+    def convertBoard(self):
+        bTypeString = ""
+        lStringBin = "1"
+
+        # For every element in the number board except the first (which isnt a thing)
+        for i in range(1,180):
+            # If the number isn't a 0, theres a block there
+            if self.numBoard[i] != 0:
+                # If the block type is a 5, it really is meaning 0
+                if self.numBoard[i] == 5:
+                    bTypeString = "{}{}".format(bTypeString, "0")
+                # Otherwise just use the type number
+                else:    
+                    bTypeString = "{}{}".format(bTypeString, str( self.numBoard[i] ))
+
+                # Finally, add that there was a block there in the first place.
+                lStringBin = "{}{}".format(lStringBin,"1")
+            # Otherwise its not a block
+            else:
+                lStringBin = "{}{}".format(lStringBin,"0")
+
+        # Now its time to convert them into a level String
+        levelString = "{}.{}".format(hex(int(lStringBin,2))[2:47], bTypeString)
+
+        print levelString
+        return levelString
+
+
+
+
+
+
+################################################################
+
+# Gameplay
+
+def beginLevel(levelToPlay):
+    # Set Background
+
+    GAME_IMAGE = ImageTk.PhotoImage(file = "GameBackground.gif")
+    canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+    canvas.update()
+
+    # Prime the infinite loop by starting the request to play
+    status = "play"
+
+    # Will continue indefinetely until the user wins or exits
+    while(status == "play"):
+        g = GameBoard(levelToPlay)
+        g.generateLevel()
+        # Status either doesn't change, or changes to "complete" or "exit"
+        status = g.playLoop()
+        g.reset()
+
+    # Returns the reason why it ended
+    return status
+
+
+def pauseMenu():
+    menu = 1
+
+    pauseSquareID = canvas.create_rectangle(199,124,601,376, width = 4.0)
+    image = ImageTk.PhotoImage(file = "pause_menu.gif")
+    pauseID = canvas.create_image(400,250,image = image)
+
+    canvas.update()
+    
+    while(True):
+        
+        print menu
+        selection = waitForInput()
+        
+        # If they selected
+        if selection == 0:
+            # Delete the images
+            canvas.delete(pauseSquareID)
+            canvas.delete(pauseID)
+            canvas.update()
+            if menu == 1:
+                break
+            if menu == 2:
+                return "restart"
+            if menu == 3:
+                return "exit"
+
+        # If they moved, move the menu number
+        if selection == 2:
+            menu = menu - 1
+        if selection == 3:
+            menu = menu + 1
+
+        # And make sure it wraps
+        if menu == 0:
+            menu = 3
+        if menu == 4:
+            menu = 1
+
+        # Display the menu
+        if menu == 1:
+            image = ImageTk.PhotoImage(file = "pause_menu.gif")
+        if menu == 2:
+            image = ImageTk.PhotoImage(file = "pause_menu_2.gif")
+        if menu == 3:
+            image = ImageTk.PhotoImage(file = "pause_menu_3.gif")
+
+        canvas.itemconfig(pauseID, image = image)
+        canvas.update()
+            
+    
+
+def waitForInput():
+    try:
+        while(True):
+            inNum = input("Enter GPIO Input: Left: 1, Up: 2, Down: 3, Right: 4, Select: 0, Start: 5\n")
+            if int(inNum) >= 0 and int(inNum) <=5:
+                return inNum
+            else:
+                print "Dude. Read. I said a number 0-5"
+                
+    except (ValueError, TypeError, NameError, SyntaxError):
+        print "Nice typo, Kyle. That shit won't break me, try again. Enter a number 0-5"
+
+
+
+def generateLevelSelect(levels, default):
+    levelSelectStuff = []
+
+    # For all 50 levels
+    for i in range(10):
+        for j in range(5):
+
+            # First fraw the boxes. If the level has been complete, the box color is Green. 
+            if levels.levelList[getLSELIndex(i,j,default)].complete :
+                fillC = "green"
+            # If the level is not complete but the level is unlocked, then the level is Blue
+            elif levels.levelList[getLSELIndex(i,j,default)].unlocked:
+                fillC = "blue"
+            # If the level is locked then it is Red
+            else:
+                fillC = "red"
+                
+            levelSelectStuff.append(canvas.create_rectangle(LSELBDR_X + LSELBOXBUFFER + LSELBIGBOX * i,
+                                                                LSELBDR_Y + LSELBOXBUFFER + LSELBIGBOX * j,
+                                                                LSELBDR_X + LSELBOXBUFFER + LSELBIGBOX * i + LSELBOXSIZE,
+                                                                LSELBDR_Y + LSELBOXBUFFER + LSELBIGBOX * j + LSELBOXSIZE,
+                                                                width = 2.0, fill = fillC))                
+
+            # Add the level numbers in, but first check to see if its 1 or 2 digits.
+            if len (levels.levelList[getLSELIndex(i,j,default)].levelNo) == 1:
+                x_dist = 19
+            else:
+                x_dist = 8
+
+            levelSelectStuff.append(canvas.create_text(LSELBDR_X + LSELBOXBUFFER + LSELBIGBOX * i + x_dist,
+                                                        LSELBDR_Y + LSELBOXBUFFER + LSELBIGBOX * j + 10,
+                                                        text = levels.levelList[getLSELIndex(i,j,default)].levelNo,
+                                                        anchor = "nw", font=("Purisa", 28)))
+
+
+    canvas.update()
+    return levelSelectStuff
+
+# Returns the index or 50 + the index depending on if its default level or not
+def getLSELIndex(i,j,default):
+    if default:
+        return j*10 + i
+    else:
+        return j*10 + i + 50
+                                    
+
+# Updates the selector for level Select
+def LSelSelectLocation(selectorID, selectionLocation, selection):
+
+    # If they are at the bottom row and want to swap
+    if selection == 3 and selectionLocation > 39:
+        # Move selector ID to begining
+        canvas.coords(selectorID, LSELBDR_X , LSELBDR_Y,
+                      LSELBDR_X + 2 * LSELBOXBUFFER + LSELBOXSIZE,
+                      LSELBDR_Y + 2 * LSELBOXBUFFER + LSELBOXSIZE,)
+        return -1
+
+    # If they want to move left and they aren't at the edge
+    if selection == 1 and selectionLocation % 10 != 0:
+        # Move it, and change the location
+        canvas.move(selectorID, -70,0)
+        selectionLocation = selectionLocation - 1
+
+    # If they want to move up and they aren't at the edge
+    if selection == 2 and selectionLocation > 9:
+        # Move it, and change the location
+        canvas.move(selectorID, 0,-70)
+        selectionLocation = selectionLocation - 10
+
+    # If they want to move down and they aren't at the edge
+    if selection == 3 and selectionLocation < 40:
+        # Move it, and change the location
+        canvas.move(selectorID, 0, 70)
+        selectionLocation = selectionLocation + 10
+
+    # If they want to move right and they aren't at the edge
+    if selection == 4 and selectionLocation % 10 != 9:
+        # Move it, and change the location
+        canvas.move(selectorID, 70,0)
+        selectionLocation = selectionLocation + 1
+
+    print selectionLocation
+    return selectionLocation
+
+
+def beginLevelEditor(l):
+    # Initialize Variables
+    selectionLocation = 0
+
+    # change background
+    GAME_IMAGE = ImageTk.PhotoImage(file = "GameBackground.gif")
+    canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+
+    # Generate the Board and create the boarder and selector
+    l.gameBoard.generateLevel()
+    canvas.delete(l.gameBoard.antImageID)
+    boxID = canvas.create_rectangle(39,49,39+40*18,49+40*10, width = 4)
+    selectorID = canvas.create_rectangle(40,50,79,89, outline = "blue",width = 5)
+    
+    canvas.update()
+
+    # While in the level editor
+    while(True):
+        # Get the input
+        selection = waitForInput()
+
+        # If the input was a 0, cycle the block image and number Board type
+        if selection == 0:
+            l.gameBoard.LvEditorToggleSquare(selectionLocation,l.numBoard,l.numBoardBlocks)
+            canvas.lift(selectorID)
+
+        # If they wanted out
+        elif selection == 5:
+            break
+        # Otherwise move the selector
+        else:
+            selectionLocation = LvEditorSelectLocation(selectorID, selectionLocation, selection)
+
+        canvas.update()
+
+    # Once they leave, delete all the stuff
+
+    print len(l.gameBoard.Board)
+    for i in l.gameBoard.Board:
+        canvas.delete(l.gameBoard.Board[i])
+    canvas.delete(selectorID)
+    canvas.delete(boxID)
+    
+    canvas.update()
+    print l.numBoard
+
+
+def LvEditorSelectLocation(selectorID, selectionLocation, selection):
+
+    # If they want to move left and they aren't at the edge
+    if selection == 1 and selectionLocation > 9:
+        # Move it, and change the location
+        canvas.move(selectorID, -40,0)
+        selectionLocation = selectionLocation - 10
+
+    # If they want to move up and they aren't at the edge
+    if selection == 2 and selectionLocation % 10 != 0:
+        # Move it, and change the location
+        canvas.move(selectorID, 0, -40)
+        selectionLocation = selectionLocation - 1
+
+    # If they want to move down and they aren't at the edge
+    if selection == 3 and selectionLocation % 10 != 9:
+        # Move it, and change the location
+        canvas.move(selectorID, 0, 40)
+        selectionLocation = selectionLocation + 1
+
+    # If they want to move right and they aren't at the edge
+    if selection == 4 and selectionLocation < 170:
+        # Move it, and change the location
+        canvas.move(selectorID, 40,0)
+        selectionLocation = selectionLocation + 10
+
+    # Make sure the Selector is on top
+    canvas.lift(selectorID)
+    canvas.update()
+    print selectionLocation
+    return selectionLocation
+
+# Everything to delete the level select widgets compiled together
+def deleteLevelSelect(list1,list2,a,b,c):
+    for i in list1:
+        canvas.delete(i)
+    for i in list2:
+        canvas.delete(i)
+    canvas.delete(a)
+    canvas.delete(b)
+    canvas.delete(c)
+
+
+################################################################
+
+# Menu Options
+
+# If the user chose "play"
+def Mplay(levelCollection):
+
+    # levelCollection.levelList is the master list of levels
+    # Access a level and check if it has been completed.
+    for i in levelCollection.levelList:
+        # If it hasn't been completed, begin the level. Otherwise, move on to the next level
+        if i.complete == False:
+            # Begin the level and wait for it to output a conclusion status
+            status = beginLevel(i)
+
+            # If the user wanted to stop playing
+            if status == "exit":
+                # Go back to the Menu
+                break
+
+            # If the user won the level
+            if status == "complete":
+                # Mark the level as complete
+                i.complete = True
+                # If it was the last level
+                if i.levelNo == "50":
+                    status = "credits"
+                    break
+                else:
+                    # Otherwise unlock the next level
+                    levelCollection.unlock(int(i.levelNo) + 1)
+                    # Continue on to the next
+
+        # If it somehow gets to this point, (It shouldnt but can) Don't let itself break
+        if i.levelNo == "50":
+            status = "credits"
+            break
+
+    # If that was the last level, show credits
+    if status == "credits":
+        GAME_IMAGE = ImageTk.PhotoImage(file = "End_Game.gif")
+        canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+        canvas.update()
+        waitForInput()
+
+
+
+
+
+# Open a level Select Option
+def MlevelSelect(levels):
+
+    menu = 1
+    
+    # Create a background for customs levels
+    image2 = ImageTk.PhotoImage(file = "Level_Select_2.gif")
+    bg_2 = canvas.create_image(1,1, image = image2, anchor = "nw")
+
+    # Create everything for custom Levels first and store IDS in a list
+    listToRemove2 = generateLevelSelect(levels, False)
+
+    # Create a background for default levels
+    image = ImageTk.PhotoImage(file = "Level_Select_1.gif")
+    bg = canvas.create_image(1,1, image = image, anchor = "nw")
+
+    # Create everything for default Levels and store their IDs in a list
+    listToRemove = generateLevelSelect(levels, True);
+
+    selectorID = canvas.create_rectangle(LSELBDR_X , LSELBDR_Y,
+                                         LSELBDR_X + 2 * LSELBOXBUFFER + LSELBOXSIZE,
+                                         LSELBDR_Y + 2 * LSELBOXBUFFER + LSELBOXSIZE,
+                                                                width = 5.0, outline = "blue")
+
+
+    selectionLocation = 0
+    
+    canvas.update()
+    
+    # Until they make a selection
+    while (True):
+        selection = waitForInput()
+
+        # If they want to leave
+        if selection == 5:
+            # Delete everything
+            deleteLevelSelect(listToRemove,listToRemove2,selectorID,bg,bg_2)
+            # and leave
+            break
+
+        # Update selectionLocation with the info from the selection
+        selectionLocation = LSelSelectLocation(selectorID, selectionLocation, selection)
+        
+        status = "none"
+        
+        # If they are swapping types
+        if selectionLocation == -1:
+            menu = menu * -1
+
+            # If they are changing to custom levels
+            if menu == -1:
+                canvas.lift(bg_2)
+                for i in listToRemove2:
+                    canvas.lift(i)
+
+            # If they are changing to default levels
+            if menu == 1:
+                canvas.lift(bg)
+                for i in listToRemove:
+                    canvas.lift(i)
+    
+            canvas.lift(selectorID)
+            
+            selectionLocation = 0
+            
+
+        # If they are selecting a level
+        if selection == 0:
+
+            # Delete all the things
+            deleteLevelSelect(listToRemove,listToRemove2,selectorID,bg,bg_2)
+
+            if menu == 1:
+                levelName = selectionLocation + 1
+            else:
+                levelName = selectionLocation + 51
+
+            # Start playing that level and all the rest
+            for i in levels.levelList:
+                # If the level was the one they selected AND it is unlocked
+                if i.levelNo == str( levelName ) and i.unlocked:
+                    # Play that level
+                    status = beginLevel(i)
+
+                    # If the user wanted to stop playing
+                    if status == "exit":
+                        # Go back to the Menu
+                        break
+
+                    # If the user won the level and 
+                    if status == "complete":
+                        # The level is a default level
+                        if int(i.levelNo) < 51:
+                            # Mark the level as complete and continue to the next
+                            i.complete = True
+                            levels.unlock(int(i.levelNo) + 1)
+                            # Increment the level
+                            selectionLocation = selectionLocation + 1
+                            # Level names are 1-50, but the locations are indexes (0-49)
+                            levelName = selectionLocation + 1
+                        else:
+                            status = "exit"
+                            break
+                        
+
+            
+
+        if status == "exit":
+            for i in listToRemove:
+                canvas.delete(i)
+            canvas.delete(selectorID)
+            break
+            
+        canvas.update()            
+                
+
+
+
+def MlevelEditor(levels):
+    # Create the level editor
+    l = LevelEditor()
+
+    # Begin the process
+    beginLevelEditor(l)
+
+    # When they finish, generate the level string
+    editorString = l.convertBoard()
+    #editorString = "800000000000000000701c06000000000000000000000.11011411"
+    
+    # Create the Level so they can test it
+    levelToTest = Level(editorString, "Test", False)
+
+    # Set the background
+    GAME_IMAGE = ImageTk.PhotoImage(file = "GameBackground.gif")
+    canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+    canvas.update()
+
+    solved = False
+    # Begin the testing process
+    while (solved == False):
+        # Start the level
+        test = GameBoard(levelToTest)
+        test.generateLevel()
+        status = test.playLoop()
+
+        if status == "complete":
+            solved = True
+            
+        test.reset()
+        
+        if status == "exit":
+            break
+
+    newLevelIndex = 99
+    if solved:
+        for i in range(len(levels.levelList)):
+            if levels.levelList[i].levelNo == "X":
+                newLevelIndex = i
+                break
+
+        levelToTest.levelNo = str (newLevelIndex + 1)
+        levelToTest.complete = True
+        levelToTest.unlocked = True
+        levels.levelList[i] = levelToTest
+        
+
+
+# Open up options....?
+def Moptions(levels):
+
+    while(True):
+        choice = 1
+        selection = 1
+
+        # Set the default background
+        GAME_IMAGE = ImageTk.PhotoImage(file = "Options_1.gif")
+        canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+        canvas.update()
+
+        while (selection != 0):
+            selection = waitForInput()
+
+            if selection == 2:
+                choice = choice - 1
+
+            if selection == 3:
+                choice = choice + 1
+
+            if choice < 1:
+                choice = 5
+
+            if choice > 5:
+                choice = 1
+
+            if choice == 1:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options_1.gif")
+
+            if choice == 2:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options_2.gif")
+
+            if choice == 3:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options_3.gif")
+
+            if choice == 4:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options_4.gif")
+                
+            if choice == 5:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options_5.gif")
+
+            canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+            canvas.update()
+            
+                
+
+        # Go to the specified menu option
+        if (choice == 1):
+            # Save the current state of the game into the .txt file
+            open("GameData.txt", "w").close()
+            file = open("GameData.txt", "w")
+
+            for i in levels.levelList:
+                file.write( i.formatOutput() )
+                file.write("\n")
+
+            file.close()
+
+            t = canvas.create_text(425,250,text = "Save Successfull", font=("Purisa", 28))
+            canvas.update()
+            time.sleep(2)
+            canvas.delete(t)
+
+        # Resets the save file
+        if (choice == 2):
+            # Open the reset file to read from
+            fileR = open("GameDataReset.txt", "r")
+
+            # Open the save file to write and then close it to clear it
+            open("GameData.txt", "w").close()
+            # Open it again to write to it
+            file = open("GameData.txt", "w")
+
+            # Replace everything with the reset file's stuff
+            for i in fileR:
+                file.write(i)
+
+            file.close()
+            fileR.close()
+
+            # Reset the level List
+            levels.levelList = []
+            levels.getLevels()
+            
+            t = canvas.create_text(415,250,text = "Reset Successfull", font=("Purisa", 28))
+            canvas.update()
+            time.sleep(2)
+            canvas.delete(t)
+
+        if (choice == 3):
+            # Shows Directions
+            GAME_IMAGE = ImageTk.PhotoImage(file = "Directions.gif")
+            canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+            canvas.update()
+            waitForInput()
+
+        # Exits the options
+        if (choice == 4):
+            break
+
+        if (choice == 5):
+            # Toggles sound
+            pass
+        
+        canvas.update()
+
+
+    
+
+    
+
+
+###############################################################
+
+
+
+
+
+
+###############################################################
+
+# Main Method
+
+def gameMain():
+
+    # Creates the bank of levels
+    levels = AllLevels()
+
+    # Populates the bank of levels
+    levels.getLevels()
+
+
+    # Menu Loop
+    while(True):
+        # Wait for GPIO INPUT
+
+        # For Now
+        choice = 1
+        selection = 1
+
+        # Set the default background
+        GAME_IMAGE = ImageTk.PhotoImage(file = "Play.gif")
+        canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+        canvas.update()
+
+        while (selection != 0):
+            selection = waitForInput()
+
+            if selection == 2:
+                choice = choice - 1
+
+            if selection == 3:
+                choice = choice + 1
+
+            if choice < 1:
+                choice = 4
+
+            if choice > 4:
+                choice = 1
+
+            if choice == 1:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Play.gif")
+
+            if choice == 2:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "LVL_SEL.gif")
+
+            if choice == 3:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "LVL_EDIT.gif")
+
+            if choice == 4:
+                GAME_IMAGE = ImageTk.PhotoImage(file = "Options.gif")
+
+
+            canvas.itemconfig(GAME_BG_ID, image = GAME_IMAGE)
+            canvas.update()
+                
+
+        # Go to the specified menu option
+        if (choice == 1):
+            Mplay(levels)
+
+        if (choice == 2):
+            MlevelSelect(levels)
+
+        if (choice == 3):
+            MlevelEditor(levels)
+            
+        if (choice == 4):
+            Moptions(levels)
+        
+        canvas.update()
+        
+
+
+##############################################################################
+
+# Startup Sequences
+
+# Visual Constants for gameplay
+
+GAMEBDR_X = 40
+GAMEBDR_Y = 50
+SQUARESIZE = 40
+
+# Visual constants for level select
+
+LSELBDR_X = 50
+LSELBDR_Y = 75
+LSELBOXSIZE = 60
+LSELBOXBUFFER = 5
+LSELBIGBOX = 70
+
+# Indexes for levelID
+STARTOFTYPE = 46
+
+
+# Create the window and canvas
+gameWindow = Tk()
+
+canvas = Canvas(width = 800, height = 500, bg = 'white')
+canvas.pack(expand = YES, fill = BOTH)
+
+GAME_IMAGE = ImageTk.PhotoImage(file = "Play.gif")
+GAME_BG_ID = canvas.create_image(1, 1, image = GAME_IMAGE, anchor = NW)
+
+# Plays the Game
+gameMain()
+
+# Must be at the end of the code in order to work
+gameWindow.mainloop()
